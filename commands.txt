@@ -7,4 +7,4 @@ send ARP requests on all the networks :
 
 
 
-sudo nmap -sP 10.0.2.15/24
+sudo nmap -sP 10.0.2.15/24a
