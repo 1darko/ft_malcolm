@@ -1,0 +1,8 @@
+arp      = ip neigh
+ifconfig = ip addr
+route    = ip route
+netstat  = ss
+
+send ARP requests on all the networks :
+
+sudo nmap -sP 10.0.2.15/24
