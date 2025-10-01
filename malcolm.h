@@ -35,6 +35,12 @@ typedef struct {
    uint32_t tpa;   /* Target IP address */
 } arp_ether_ipv4;
 
+typedef struct {
+   uint16_t op;
+   uint8_t victim_MAC[ETH_ALEN];
+   uint32_t victim_IP;
+   uint8_t fake_MAC[ETH_ALEN];
+   uint32_t target_IP;
+} reply_info;
+
 #endif
-
-

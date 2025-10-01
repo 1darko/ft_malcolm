@@ -3,8 +3,13 @@ ifconfig = ip addr
 route    = ip route
 netstat  = ss
 
+ip -s -s neigh flush all - purge MAC adresses
+
 send ARP requests on all the networks :
 
 
+FROM VICTIM : 
+
+sudo arping -c 1 [IP] - sends ARP request
 
 sudo nmap -sP 10.0.2.15/24a
