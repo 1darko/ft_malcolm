@@ -16,14 +16,14 @@
 #include <net/if_arp.h>     /* ARP hardware types */
 #include <netpacket/packet.h> /* sockaddr_ll (AF_PACKET) */
 
-typedef struct {
+typedef struct __attribute__((packed)){
    uint8_t dest_addr[ETH_ALEN]; /* Destination hardware address */
    uint8_t src_addr[ETH_ALEN];  /* Source hardware address */
    uint16_t frame_type;   /* Ethernet frame type */
 } ether_hdr;
 
 /* Ethernet ARP packet from RFC 826 */
-typedef struct {
+typedef struct __attribute__((packed)){
    uint16_t htype;   /* Format of hardware address */
    uint16_t ptype;   /* Format of protocol address */
    uint8_t hlen;    /* Length of hardware address */
@@ -35,7 +35,7 @@ typedef struct {
    uint32_t tpa;   /* Target IP address */
 } arp_ether_ipv4;
 
-typedef struct {
+typedef struct __attribute__((packed)){
    uint16_t op;
    uint8_t victim_MAC[ETH_ALEN];
    uint32_t victim_IP;
