@@ -139,6 +139,11 @@ void building_in_addr(struct sockaddr_ll *addr)
     addr->sll_family = AF_PACKET;
     addr->sll_protocol = htons(ETH_P_ARP);
     addr->sll_ifindex = if_nametoindex("enp0s3");
+    if(addr->sll_ifindex == 0)
+    {
+        fprintf(stderr, "if_nametoindex");
+        exit(1);
+    }
     addr->sll_halen = ETH_ALEN;
 }
 
@@ -152,6 +157,44 @@ void building_package(arp_ether_ipv4 **arp, ether_hdr *fake_header)
     ft_memcpy(&(*arp)->sha, &fake_header->src_addr, ETH_ALEN);
     ft_memcpy(&(*arp)->tha, &fake_header->dest_addr, ETH_ALEN);
 }
+void print_arp_packet(const char *label, arp_ether_ipv4 *arp, ether_hdr *fake_header)
+{
+    struct in_addr spa_addr, tpa_addr;
+    spa_addr.s_addr = arp->spa;
+    tpa_addr.s_addr = arp->tpa;
+
+    printf("\n=== %s ===\n", label);
+printf("Ethernet Header:\n");
+
+    printf("Dest addr   : %02x:%02x:%02x:%02x:%02x:%02x\n",
+           fake_header->dest_addr[0], fake_header->dest_addr[1], fake_header->dest_addr[2],
+           fake_header->dest_addr[3], fake_header->dest_addr[4], fake_header->dest_addr[5]);
+
+    printf("Src addr   : %02x:%02x:%02x:%02x:%02x:%02x\n",
+           fake_header->src_addr[0], fake_header->src_addr[1], fake_header->src_addr[2],
+           fake_header->src_addr[3], fake_header->src_addr[4], fake_header->src_addr[5]);
+    printf("\nARP Packet:\n");
+    printf("htype : %u\n", ntohs(arp->htype));
+    printf("ptype : 0x%04x\n", ntohs(arp->ptype));
+    printf("hlen  : %u\n", arp->hlen);
+    printf("plen  : %u\n", arp->plen);
+    printf("op    : %u (%s)\n", ntohs(arp->op),
+           ntohs(arp->op) == 1 ? "request" :
+           ntohs(arp->op) == 2 ? "reply" : "unknown");
+
+    printf("SHA   : %02x:%02x:%02x:%02x:%02x:%02x\n",
+           arp->sha[0], arp->sha[1], arp->sha[2],
+           arp->sha[3], arp->sha[4], arp->sha[5]);
+
+    printf("SPA   : %s\n", inet_ntoa(spa_addr));
+
+    printf("THA   : %02x:%02x:%02x:%02x:%02x:%02x\n",
+           arp->tha[0], arp->tha[1], arp->tha[2],
+           arp->tha[3], arp->tha[4], arp->tha[5]);
+
+    printf("TPA   : %s\n", inet_ntoa(tpa_addr));
+}
+
 
 int main(int ac, char **av) 
 {
@@ -174,7 +217,7 @@ int main(int ac, char **av)
     }
     arp_ether_ipv4 *arp = malloc(sizeof(*arp));
     ft_memset(arp, 0, sizeof(arp_ether_ipv4));
-    if(inet_pton(AF_INET, av[1], &arp->spa) != 1 || inet_pton(AF_INET, av[3], &arp->tpa) != 1)
+    if(inet_pton(AF_INET, av[1], &arp->tpa) != 1 || inet_pton(AF_INET, av[3], &arp->spa) != 1)
     {
         error_printer(1);
         free(fake_header);
@@ -189,7 +232,7 @@ int main(int ac, char **av)
         free(arp);
         return 1;
     }
-    uint8_t buf1[2048];
+    uint8_t buf1[1500];
     ft_memset(buf1, 0, sizeof(buf1));
     // Setup for sendto
     struct sockaddr_ll addr;
@@ -198,21 +241,40 @@ int main(int ac, char **av)
     ft_memcpy(addr.sll_addr, fake_header->dest_addr, ETH_ALEN);
 
     arp_ether_ipv4 *recv_arp = (arp_ether_ipv4 *)(buf1 + sizeof(ether_hdr));
+    
+    size_t eth_len = sizeof(ether_hdr);
+    size_t arp_len = sizeof(arp_ether_ipv4);
+    size_t total = eth_len + arp_len;
+    uint8_t packet[1500]; // assez grand pour une trame Ethernet
+
+    // copier l'en-tête ethernet
+    ft_memcpy(packet, fake_header, eth_len);
+
+    // copier la trame ARP
+    ft_memcpy(packet + eth_len, arp, arp_len);
+    // ◦ sigaction - examine and change signal action
+    // ◦ signal - set a signal handler
     while(1)
     {
         recvfrom(sock, buf1, sizeof(buf1), 0, NULL, NULL);
         if(ft_memcmp(&recv_arp->tpa, &arp->spa, sizeof(struct in_addr)) == 0)
             break;
-        else
-            printf("Jai recu un truc\n");
     }
-    if(sendto(sock, buf1, sizeof(arp_ether_ipv4) + sizeof(ether_hdr), 0, (struct sockaddr*)&addr,\
-            (socklen_t)sizeof(addr)) < 0)
-        fprintf(stderr, "No send\n");
+
+
+    // envoyer la trame complète
+    if(1)
+    {
+        ssize_t sent = sendto(sock, packet, total, 0,
+                            (struct sockaddr *)&addr, (socklen_t)sizeof(addr));
+        if(sent < 0)
+            fprintf(stderr, "No send\n");
+        else
+            printf("Sent %zd bytes\n", sent);
+        print_arp_packet("Sent ARP reply", arp, fake_header);
+    }
     free(fake_header);
     free(arp);
     close(sock);
-
-    
     return 0;
 }
