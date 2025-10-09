@@ -239,12 +239,11 @@ int resolve_ip(const char *name_or_ip, uint32_t *out_nbo)
     rc = getaddrinfo(name_or_ip, NULL, &hints, &res);
     if(rc == 0)
     {
-        /* prend la première adresse IPv4 renvoyée */
         struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
         *out_nbo = sin->sin_addr.s_addr; /* déjà en network byte order */
-    
-        /* (optionnel) debug : afficher l'IP résolue
-           inet_ntop(AF_INET, &sin->sin_addr, ipstr, sizeof(ipstr));
+
+        /* 
+            inet_ntop(AF_INET, &sin->sin_addr, ipstr, sizeof(ipstr));
            printf("%s -> %s\n", name_or_ip, ipstr);
         */
     
@@ -255,23 +254,27 @@ int resolve_ip(const char *name_or_ip, uint32_t *out_nbo)
         return 0;
     return -1;
 }
-int main(int ac, char **av) 
+
+int arg_check(int ac, char **av, int *flag)
 {
     if(ac != 5 && ac != 6)
-    {
-        fprintf(stderr, "Args needed\n");
         return 1;
-    }
-    int  flag = 0;
     if(ac == 6)
     {
         if(ft_memcmp(av[5], "-v", 3) == 0)
-            flag = 1;
+            *flag = 1;
         else
-        {
-            fprintf(stderr, "For verbose mode use -v as last argument\n");
             return 1;
-        }
+    }
+    return 0;
+}
+int main(int ac, char **av) 
+{
+    int flag = 0;
+    if(arg_check(ac, av, &flag) != 0)
+    {
+        fprintf(stderr, "Usage: %s <target IP> <fake MAC> <victim IP> <victim MAC> [-v]\n", av[0]);
+        return 1;
     }
     if(getuid() != 0)
     {
