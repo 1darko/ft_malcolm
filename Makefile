@@ -20,7 +20,7 @@ fclean: clean
 	$(RM) $(NAME)
 
 run : re
-	sudo valgrind --leak-check=full ./$(NAME) 10.0.2.200 00:11:22:CC:44:Bb victim 08:00:27:E7:EB:9F -v
+	sudo valgrind --leak-check=full ./$(NAME) 167772738 00:11:22:CC:44:Bb 2114001352 08:00:27:E7:EB:9F -v
 
 re: fclean all
 

